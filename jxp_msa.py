@@ -163,7 +163,7 @@ def MSA_WeightedFrequencies(msa, weights = None):
 
    # if no weights given, use uniform weights
    if weights is None:
-      weights = 37.5* np.ones(msa.N, dtype=np.int32)
+      weights = np.ones(msa.N, dtype=np.int32)
 
    # sum weights (denominator for frequency calculation)
    Nw = np.sum(weights)
