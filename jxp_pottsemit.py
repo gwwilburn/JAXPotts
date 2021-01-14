@@ -36,7 +36,6 @@ parser.add_argument("--seed", action='store', nargs=1, type=int, default = [0], 
 
 
 if __name__ == "__main__":
-   print("hello world")
 
    args = parser.parse_args()
 
@@ -51,15 +50,21 @@ if __name__ == "__main__":
    if args.rna:
       abc = ABC_RNA
 
-   # create pRNG Keys
+   # create pRNG keys
    key = random.PRNGKey(seed)
-   keys = random.split(key, Nseq)
 
    # read potts model
    potts = Potts_Read(potts_inpath, abc)
+   L,q = potts.h.shape
 
-   # generate aligned sequences
-   ax_1hot_mcmc, H_mcmc, keys = MCMC_MSAEmit(potts.h, potts.e, keys, Nflip)
+   #make initial sequences randomly (in one-hot form)
+   ax_1hot_mcmc = nn.one_hot(random.choice(key, np.arange(0,q), shape=(Nseq,L)), q)
+
+   # generate Nseq pRNG keys
+   keys = random.split(key, Nseq)
+
+   # generate aligned sequences in one-hot form via MCMC
+   ax_1hot_mcmc, H_mcmc, keys = MCMC_MSAEmitPersistent(potts.h, potts.e, ax_1hot_mcmc, keys, Nflip)
 
    # create MSA object
    ax_mcmc = MSA_OnehotInverse(ax_1hot_mcmc)

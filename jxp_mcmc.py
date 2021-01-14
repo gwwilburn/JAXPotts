@@ -50,4 +50,24 @@ def MCMC_SeqEmit(h, e, key, nflip):
 
 MCMC_MSAEmit = vmap(MCMC_SeqEmit, in_axes = (None, None, 0, None), out_axes = (0,0,0))
 
+def MCMC_SeqEmitPersistent(h, e, seq_1hot, key, nflip):
+   (L,q) = h.shape
 
+   # 1-hot sequence now taken as input argument
+   #seq_1hot = nn.one_hot(random.choice(key, np.arange(0,q), shape = (1,L))[0],q)
+   H = Potts_ScoreSeqCore(h,e,seq_1hot)
+
+   #@jit
+   #def loop_fun_scan(loop_carry, i):
+   #   h, e, seq_1hot, H, key = loop_carry
+   #   seq_1hot, H, key = MCMC_SpinFlip(h, e, seq_1hot, H, key)
+   #   return (h, e, seq_1hot, H, key), i
+
+   #(h, e, seq_1hot, H, key), i = lax.scan(loop_fun_scan, (h,e,seq_1hot, H, key), None, length = nflip)
+
+   for i in range(0,nflip):
+      seq_1hot, H, key = MCMC_SpinFlip(h, e, seq_1hot, H, key)
+
+   return seq_1hot, H, key
+
+MCMC_MSAEmitPersistent = vmap(MCMC_SeqEmitPersistent, in_axes = (None, None, 0, 0, None), out_axes = (0,0,0))
