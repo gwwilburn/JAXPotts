@@ -9,6 +9,7 @@ from jxp_msa import *
 from functools import partial
 
 import sys
+import string
 
 class MSA(object):
 
@@ -52,16 +53,112 @@ def MSA_Read(path, abc, fileformat = "afa", name = ""):
    ret_msa = None
    if fileformat.lower() == "stockholm":
       ret_msa = MSA_ReadStockholm(path, abc, name)
-   if fileformat.lower() in ["fasta", "afa"]:
+   elif fileformat.lower() == "pfam":
+      ret_msa = MSA_ReadPfam(path, abc, name)
+   elif fileformat.lower() in ["fasta", "afa"]:
       ret_msa = MSA_ReadAFA(path, abc, name)
    else:
       print("Invalid file format! Returning None")
 
    return ret_msa
 
-# TODO: right stockholm-reading function
 def MSA_ReadStockholm( path, abc, name):
    return None
+
+def MSA_ReadPfam( path, abc, name):
+   sqname = []
+   msa_array = []
+   ss_cons = ""
+   rf = ""
+
+
+   af = open(path, 'r')
+
+   in_aligment = False
+
+   for line in af:
+      line = line.rstrip()
+
+      if "# STOCKHOLM" in line:
+         in_alignment = True
+
+      if not in_alignment:
+         continue
+
+      # remove spacing
+      linelist = line.split(' ')
+      linelist= [token for token in linelist if token != '']
+
+      if len(linelist) == 0:
+         continue
+      if linelist[0] == "//":
+         break
+
+
+      # handle markup lines
+      if list(linelist[0])[0] == '#':
+
+         # per-file markup lines
+         # NEEDS TO BE FINISHED
+         if linelist[0] == "#=GF":
+            continue
+
+         # per-sequence markup lines
+         # NEEDS TO BE FINISHED
+         # ESPECIALLY SEQUENCE WEIGHTS
+         elif linelist[0] == "#=GS":
+            #if linelist[2] == "WT":
+            #   wgt.append(float(linelist[3]))
+            continue
+
+         # per-column markup lines
+         elif linelist[0] == "#=GC":
+
+            if linelist[1] == "SS_cons":
+               ss_cons = linelist[2]
+
+            elif linelist[1] == 'RF':
+               rf = linelist[2]
+
+            #elif linelist[1] == "PP":
+            #   pp_cons += linelist[2]
+
+         # per-residue markup
+         # NEEDS TO BE FINISHED
+         elif linelist[0] == "#=GR":
+            continue
+
+      # extract sequences
+      else:
+
+         if not len(linelist) == 2:
+            continue
+
+         sqname.append(linelist[0])
+         msa_array.append(list(linelist[1]))
+
+
+   # get alignment dimensions
+   L = len(msa_array[0])
+   N = len(msa_array)
+
+
+   # convert characters to integers
+   for n in range(0, N):
+      msa_array[n] =  Seq2Idx(msa_array[n], abc)
+   ax = np.array(msa_array,dtype=np.int8)
+
+   ret_msa = MSA(abc = abc, ax = ax, L = L, N = N, sqname = sqname)
+
+   if len(ss_cons) > 0:
+      ret_msa.ss_cons = onp.array(list(ss_cons))
+      if abc == ABC_RNA:
+         ret_msa.bp_map = MSA_BasePairMap(ret_msa.ss_cons)
+
+   if len(rf) > 0:
+      ret_msa.rf = onp.array(list(rf))
+
+   return ret_msa
 
 def MSA_ReadAFA(path,abc, name):
    sqname = []   # sequence names
@@ -100,6 +197,51 @@ def MSA_ReadAFA(path,abc, name):
 
    return ret_msa
 
+def MSA_BasePairMap(ss_cons):
+   L = ss_cons.size
+   bp_map = (-1)*np.ones(L, dtype=np.int32)
+
+   bra_list_nest = ['(', '<', '[', '{']
+   ket_list_nest = [')', '>', ']', '}']
+
+   bra_list_pk = list(string.ascii_uppercase)
+   ket_list_pk = list(string.ascii_lowercase)
+
+   bra_list = bra_list_nest + bra_list_pk
+   ket_list = ket_list_nest + ket_list_pk
+
+   elev       = np.zeros(L, dtype = np.int32)
+   elev_count = 0
+   last_bp    = '' # keep track of last bp
+
+   for i in range(0,L):
+      if ss_cons[i] in bra_list:
+
+         bra = ss_cons[i]
+         ket = ket_list[bra_list.index(bra)]
+
+         # find position of matching ket
+         count = 1
+         j = i
+
+         # march over downstream positions until we find the matching ket
+         while count > 0:
+            j += 1
+            c = ss_cons[j]
+
+            #if we see a bra of this type, increase count
+            if ss_cons[j] == bra:
+               count += 1
+
+            #if we see a ket of this type, decrease count
+            elif ss_cons[j] == ket:
+               count -= 1
+
+         bp_map = index_update(bp_map, index[i], j)
+         bp_map = index_update(bp_map, index[j], i)
+
+   return bp_map
+
 def MSA_Write(msa, outpath, fileformat = "afa"):
 
    if msa.sqname is None or (len(msa.sqname) != msa.N):
@@ -118,7 +260,6 @@ def MSA_WriteAFA(msa, outpath):
    abc = msa.abc
 
    NLine = int(np.ceil(float(L) / 60.0))
-   print(NLine)
 
    outfile = open(outpath, 'w')
    for n in range(0,N):
@@ -142,7 +283,9 @@ def MSA_WritePfam(msa, outpath):
 # Comments: Slimmed-down frequency function
 #           Does not include option for weighted frequencies
 #           To be called MANY times during BMLearn
-# args:    -MSA object
+#
+# args:    -ax_1hot: A digital MSA in 1 hot format (N x L x q)
+#
 # returns: -f1: L x q array of single site frequencies
 #          -f2: L x q x L x q symmetric array of pairwise frequencies
 #           (with no terms on i=j diagonal)
@@ -158,6 +301,21 @@ def MSA_Frequencies(ax_1hot):
    f2 = np.sum(ax_useme, axis=0) / Nf
 
    return f1, f2
+
+# Function: MSA_WeightedFrequencies
+# Comments: Function to calculate single-site and pairwise
+#           frequencies with provided relative sequence weights.
+#           If no weights are provided, then uniform weights
+#           are used and the result is the same as that from
+#           MSA_Frequencies().
+#
+# args:    -msa: MSA object
+#          -weights:Relative sequence weights (N-dimensional array)
+#
+# returns: -f1: L x q array of (possibly weighted) single site frequencies
+#          -f2: L x q x L x q symmetric array of (possibly weighted) pairwise
+#           frequencies (with no terms on i=j diagonal)
+#
 
 def MSA_WeightedFrequencies(msa, weights = None):
 
@@ -175,10 +333,78 @@ def MSA_WeightedFrequencies(msa, weights = None):
    wgt_1hot = MSA_WeightedOneHot(msa.ax_1hot, weights)
    wgt_useme = MSA_WeightedUseMe(msa.ax_1hot, weights)
 
+   #mask_useme = MSA_MaskUseme(ss_cons, pknot)
+
    f1 = np.sum(wgt_1hot, axis=0)  / Nw
    f2 = np.sum(wgt_useme, axis=0) / Nw
 
    return f1, f2
+
+# Function: MSA_MaskedFrequencies
+# Comments: Given an MSA and consensus secondary structure annotation,
+#           Calculate single-site frequencies as normal, but observed
+#           pairwise frequiencies only for column pairs corresponding
+#           to annotated base pairs. All other pairwise frequency values
+#           are set to the product of corresponding single-site frequencies.
+#           This function can handle relative sequence weights if provided.
+#
+# Args:    msa:     An MSA object (ss_cons required)
+#          weights: Optional relative sequence weights (N-dimensional array)
+#          pknot:   Boolean switch to handle non-nested annotated bp
+#
+# Returns: f1: L x q array of (possibly weighted) single site frequencies
+#          f2: L x q x L x q symmetric array of (possibly wighted)
+#              pairwise frequencies, calculated as described above
+#              (with no terms on i=j diagonal)
+#
+def MSA_MaskedFrequencies(msa, weights=None, pknot=False):
+
+   if msa.ss_cons is None:
+      sys.exit("\n\nError: MSA_MaskedFrequencies() requires secondary structure annotation (ss_cons)\n\n")
+
+   L = msa.L
+   q = msa.abc.q
+
+   # list of SS_cons characters corresponding to 5' base pairs
+   bra_list = ['(', '<', '[', '{']
+   if pknot:
+      bra_list += list(string.ascii_uppercase)
+
+   # if no weights given, use uniform weights
+   if weights is None:
+      weights = np.ones(msa.N, dtype=np.int32)
+
+   # sum weights (denominator for frequency calculation)
+   Nw = np.sum(weights)
+
+   # make sure 1-hot tensor exists
+   if msa.ax_1hot is None:
+      msa.ax_1hot = MSA_Onehot(msa.ax,msa.abc.q)
+
+   wgt_1hot = MSA_WeightedOneHot(msa.ax_1hot, weights)
+   wgt_useme = MSA_WeightedUseMe(msa.ax_1hot, weights)
+
+   # calculate single site frequencies
+   f1 = np.sum(wgt_1hot, axis=0)  / Nw
+
+   # initially set pairwise frequencies to be product of single-site freqs
+   # (with no i = j diagonal term)
+   f2 =  np.tensordot(f1, f1, axes=0)  * np.reshape(1-np.eye(L), (L,1,L,1))
+
+   # Loop over MSA positions
+   # if position is annotated as 5' position of basepair (bra),
+   # reset pairwise frequencies for this position and its pair to
+   # weighted, observed pairwise frequencies in MSA
+   for i in range(0, msa.L):
+      ssi = msa.ss_cons[i]
+
+      if ssi in bra_list:
+         j  = msa.bp_map[i]
+         f2 = index_update(f2, index[i,:,j,:], np.sum(wgt_useme[:,i,:,j,:], axis=0) / Nw)
+         f2 = index_update(f2, index[j,:,i,:], np.sum(wgt_useme[:,j,:,i,:], axis=0) / Nw)
+
+   return f1, f2
+
 
 # Function: MSA_2PtCorrelations
 # Comments: Given single-site and pairwise MSA frequences,
