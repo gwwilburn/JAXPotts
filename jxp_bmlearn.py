@@ -111,13 +111,17 @@ def BMLearn_Convergence(f1, f2, c2, epsilon, niter, nseq, nflip, key):
 
    return h, e,  corr_err
 
-def BMLearn_Persistent(f1, f2, c2, epsilon, niter, nseq, nflip, errthresh, key):
+def BMLearn_Persistent(f1, f2, c2, epsilon, niter, nseq, nflip, errthresh, key, potts_init = None):
 
    (L, q) = f1.shape
 
    #initialize potts model params
-   h = np.log(f1)
-   e = np.zeros((L,q,L,q), dtype = np.float32)
+   if potts_init is None:
+      h = np.log(f1)
+      e = np.zeros((L,q,L,q), dtype = np.float32)
+   else:
+      h = potts_init.h
+      e = potts_init.e
 
    # generate initial sequences
    ax_1hot_mcmc = nn.one_hot(random.choice(key, np.arange(0,q), shape=(nseq,L)), q)
@@ -197,6 +201,26 @@ parser.add_argument('--errthresh', action='store', nargs=1, type=float, default 
 # sequence weighting argument
 parser.add_argument('--wpb', action='store_true',help=
                     "Use Henikoff position-based weights when calculating training freqs.")
+
+# masked training argument
+parser.add_argument('--masked', action='store_true',help=
+                    "Pairwise training frequencies are set to product of single-site frequencies \n \
+                     **except** annotated basepairs, for which observed frequencies are used. \n \
+                     Input MSA must be in Stockholm/Pfam format and have an SS_Cons line with \n \
+                     annotated BP. Only nested bp are considered unless --pknot is used.")
+
+parser.add_argument('--pknot', action='store_true',help=
+                    "If --masked is used, set training pairwise frequencies to observed freqs \n \
+                     for nested **and** non-nested annotated bp.")
+
+# Input MSA options
+parser.add_argument('--informat', action='store', nargs=1, type=str, default = ["afa"], help=
+                    "Assert that input msa file is in format <s>")
+
+# optional initial potts model
+parser.add_argument('--pottsinit', action='store', nargs=1, type=str, default=None, help=
+                    "Initialze Potts model to model in <f> at start of gradient descent.")
+
 # RNG arguments
 parser.add_argument('--seed', action='store', nargs=1, type=int, default = [0], help=
                     "Seed for RNG.")
@@ -209,7 +233,7 @@ parser.add_argument('--f1file', action='store', nargs=1, type=str, default=None,
                     "Output L x q array of single-site frequencies estimated via MCMC at the end of gradieant descent to <f>")
 
 parser.add_argument('--f2file', action='store', nargs=1, type=str, default=None, help=
-                    "Output L x q x L x q array of pairwise frequencies estimated via MCMC at the end of gradient descent to <f>")
+                    "Output L x q x L x q array of pairwise frequencies estimated via mcmc at the end of gradient descent to <f>")
 
 
 
@@ -226,6 +250,19 @@ if __name__ == "__main__":
    epsilon = np.float32(args.epsilon[0])
    errthresh = np.float32(args.errthresh[0])
 
+   # options for reading MSA and calculating frequencies
+   informat = args.informat[0]
+   masked   = args.masked
+   if masked and informat.lower() not in ["stockholm", "pfam"]:
+      sys.exit("\n\nERROR: --masked can only be used with an input MSA in Stockholm/Pfam format.\n\n")
+   pknot = args.pknot
+   if pknot and not masked:
+      print("\n\nWarning: --pknot used without --masked. Ignoring and calculating pairwise frequencies as normal.\n\n")
+
+   potts_init = None
+   if args.pottsinit:
+      potts_init = Potts_Read(args.pottsinit[0])
+
    wpb =  args.wpb
    seed = args.seed[0]
 
@@ -233,15 +270,16 @@ if __name__ == "__main__":
    if args.rna:
       abc = ABC_RNA
 
-   msa_in = MSA_Read(path = msa_inpath, abc = abc)
-
+   msa_in = MSA_Read(path = msa_inpath, abc = abc, fileformat = informat)
 
    # calculate henikoff weights, if requested:
    if wpb:
       MSAWeight_PB(msa_in)
 
-   #f1, f2 = MSA_Frequencies(msa_in.ax_1hot)
-   f1, f2 = MSA_WeightedFrequencies(msa_in, msa_in.wgt)
+   if masked:
+      f1, f2 = MSA_MaskedFrequencies(msa_in, msa_in.wgt, pknot)
+   else:
+      f1, f2 = MSA_WeightedFrequencies(msa_in, msa_in.wgt)
 
    f1_plp, f2_plp = Prior_Laplace(f1, f2, msa_in.N, 1.0)
 
@@ -252,7 +290,8 @@ if __name__ == "__main__":
    #h_bml, e_bml, corr_err = BMLearn_Convergence(f1_plp, f2_plp, c2_plp, epsilon, niter=Niter, nflip=Nflip, nseq=Nseq, key=key)
    h_bml, e_bml, corr_err, f1_mcmc, f2_mcmc = BMLearn_Persistent(f1_plp, f2_plp, c2_plp,
                                                                 epsilon, niter=Niter, nflip=Nflip,
-                                                                nseq=Nseq, errthresh=errthresh, key=key)
+                                                                nseq=Nseq, errthresh=errthresh,
+                                                                key=key, potts_init=potts_init)
 
 
    pm_bml = PottsModel(h = h_bml, e = e_bml, abc = abc, L = msa_in.L)
