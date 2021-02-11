@@ -430,6 +430,30 @@ def MSA_2PtCorrelations(f1, f2):
 
    return f2 -  (np.tensordot(f1, f1, axes=0)  * np.reshape(1-np.eye(L), (L,1,L,1)))
 
+
+@jit
+def Seq_ID(seq1, seq2):
+   return np.sum(seq1 == seq2)
+
+@jit
+def Seq_Onehot_ID(seq1_onehot, seq2_onehot):
+   return np.tensordot(seq1_onehot, seq2_onehot, axes = ([0,1], [0,1]))
+
+@jit
+def MSA_ID(ax_onehot):
+
+   ax_onehot_flat = ax_onehot.reshape(ax_onehot.shape[0], -1)
+
+   return np.matmul(ax_onehot_flat, np.transpose(ax_onehot_flat))
+
+@jit
+def MSA_AvgPID(ax_onehot):
+
+   (N,L,q) = np.float32(ax_onehot.shape)
+   msa_id = MSA_ID(ax_onehot)
+
+   return (np.sum(msa_id) - L*N) / (L*N*(N-1))
+
 # function for converting and aligned sequence to a list of indices
 def Seq2Idx(seq, abc):
    return [abc.charmap[char] for char in seq]
